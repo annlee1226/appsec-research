@@ -1,5 +1,3 @@
-# appsec-research
-
 
 # Web Security Writeups
 
