@@ -9,7 +9,7 @@ the reasoning that led to the working exploit, and remediation guidance.
 
 ## Writeups
 
-- [Stored XSS to Account Takeover via Client-Side Credential Hash](./stored-xss-credential-hash/README.md)
+- [Stored XSS to Account Takeover via Client-Side Credential Hash](portswigger/stored-xss-credential-hash.md)
 
 - [Title of second writeup](./second/README.md)
 
