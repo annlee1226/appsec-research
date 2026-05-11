@@ -16,4 +16,4 @@ the reasoning that led to the working exploit, and remediation guidance.
 
 ## Tools referenced
 
-Burp Suite, Python (requests), hashcat, John the Ripper
+Burp Suite, Python (requests), hashcat
